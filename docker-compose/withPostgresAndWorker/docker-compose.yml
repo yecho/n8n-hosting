@@ -7,7 +7,7 @@ volumes:
 
 x-shared: &shared
   restart: always
-  image: docker.n8n.io/n8nio/n8n
+  image: n8n-custom
   environment:
     - DB_TYPE=postgresdb
     - DB_POSTGRESDB_HOST=postgres
@@ -19,6 +19,15 @@ x-shared: &shared
     - QUEUE_BULL_REDIS_HOST=redis
     - QUEUE_HEALTH_CHECK_ACTIVE=true
     - N8N_ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    - N8N_RUNNERS_ENABLED=true
+    - N8N_RUNNERS_MODE=external
+    - N8N_RUNNERS_BROKER_LISTEN_ADDRESS=0.0.0.0
+    - N8N_RUNNERS_AUTH_TOKEN=mdb_runner_token
+    - N8N_NATIVE_PYTHON_RUNNER=true
+    - N8N_BLOCK_FS_WRITE_ACCESS=false # Allows writing files
+    - NODES_EXCLUDE=[] # This allows the "Execute Command" node to be visible
+    - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+    - N8N_NODES_BASE_FILESYSTEM_ALLOWED_PATHS=/home/node/project # This tells n8n exactly which folder the "Files from Disk" node can use
   links:
     - postgres
     - redis
@@ -44,7 +53,7 @@ services:
       - db_storage:/var/lib/postgresql/data
       - ./init-data.sh:/docker-entrypoint-initdb.d/init-data.sh
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      test: ['CMD-SHELL', 'pg_isready -h localhost -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -64,9 +73,24 @@ services:
     <<: *shared
     ports:
       - 5678:5678
+      - 5679:5679 # task runner
+    volumes:
+      - ${HOME}/proj/vidlog:/home/node/project # XXX: CHANGE THE HOST-SIDE FOLDER TO YOUR PROJECT FOLDER
 
   n8n-worker:
     <<: *shared
     command: worker
+    depends_on:
+      - n8n
+
+  task-runners:
+    image: n8nio/runners
+    container_name: n8n-runners
+    environment:
+      - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
+      - N8N_RUNNERS_AUTH_TOKEN=mdb_runner_token
+    volumes:
+      # Shared volume for file access if needed
+      - n8n_storage:/home/node/.n8n
     depends_on:
       - n8n
